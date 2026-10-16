@@ -1,0 +1,118 @@
+[
+ {
+  "id": "victron-100-30",
+  "origen": "base",
+  "fabricante": "Victron Energy",
+  "modelo": "SmartSolar MPPT 100/30",
+  "tipo": "MPPT",
+  "vocMax": 100,
+  "corrienteSalidaA": 30,
+  "voltajesBateria": [
+   12,
+   24
+  ],
+  "eficiencia": 0.97,
+  "precio": null,
+  "nota": "Valores típicos de ficha técnica (referencia). Verifica con la hoja de datos vigente del fabricante."
+ },
+ {
+  "id": "victron-150-35",
+  "origen": "base",
+  "fabricante": "Victron Energy",
+  "modelo": "SmartSolar MPPT 150/35",
+  "tipo": "MPPT",
+  "vocMax": 150,
+  "corrienteSalidaA": 35,
+  "voltajesBateria": [
+   12,
+   24,
+   48
+  ],
+  "eficiencia": 0.97,
+  "precio": null,
+  "nota": "Valores típicos de ficha técnica (referencia). Verifica con la hoja de datos vigente del fabricante."
+ },
+ {
+  "id": "victron-150-70",
+  "origen": "base",
+  "fabricante": "Victron Energy",
+  "modelo": "SmartSolar MPPT 150/70",
+  "tipo": "MPPT",
+  "vocMax": 150,
+  "corrienteSalidaA": 70,
+  "voltajesBateria": [
+   12,
+   24,
+   48
+  ],
+  "eficiencia": 0.97,
+  "precio": null,
+  "nota": "Valores típicos de ficha técnica (referencia). Verifica con la hoja de datos vigente del fabricante."
+ },
+ {
+  "id": "victron-250-100",
+  "origen": "base",
+  "fabricante": "Victron Energy",
+  "modelo": "SmartSolar MPPT 250/100",
+  "tipo": "MPPT",
+  "vocMax": 250,
+  "corrienteSalidaA": 100,
+  "voltajesBateria": [
+   12,
+   24,
+   48
+  ],
+  "eficiencia": 0.97,
+  "precio": null,
+  "nota": "Valores típicos de ficha técnica (referencia). Verifica con la hoja de datos vigente del fabricante."
+ },
+ {
+  "id": "epever-4215bn",
+  "origen": "base",
+  "fabricante": "EPEver",
+  "modelo": "Tracer 4215BN",
+  "tipo": "MPPT",
+  "vocMax": 150,
+  "corrienteSalidaA": 40,
+  "voltajesBateria": [
+   12,
+   24
+  ],
+  "eficiencia": 0.96,
+  "precio": null,
+  "nota": "Valores típicos de ficha técnica (referencia). Verifica con la hoja de datos vigente del fabricante."
+ },
+ {
+  "id": "epever-xtra4415n",
+  "origen": "base",
+  "fabricante": "EPEver",
+  "modelo": "XTRA 4415N",
+  "tipo": "MPPT",
+  "vocMax": 150,
+  "corrienteSalidaA": 40,
+  "voltajesBateria": [
+   12,
+   24,
+   48
+  ],
+  "eficiencia": 0.96,
+  "precio": null,
+  "nota": "Valores típicos de ficha técnica (referencia). Verifica con la hoja de datos vigente del fabricante."
+ },
+ {
+  "id": "pwm-30",
+  "origen": "base",
+  "fabricante": "Genérico",
+  "modelo": "PWM 30 A",
+  "tipo": "PWM",
+  "vocMax": 50,
+  "corrienteSalidaA": 30,
+  "voltajesBateria": [
+   12,
+   24
+  ],
+  "eficiencia": 0.98,
+  "precio": null,
+  "nota": "Valores típicos de ficha técnica (referencia). Verifica con la hoja de datos vigente del fabricante. En PWM el generador opera al voltaje de la batería (modelo detallado en la Fase 2)."
+ }
+]
