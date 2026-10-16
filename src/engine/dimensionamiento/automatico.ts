@@ -137,14 +137,17 @@ export function proponerOffGrid(args: {
 
   // Banco
   const candidatas = args.baterias.filter((b) => (args.quimica ? b.quimica === args.quimica : true) && vSis % b.voltajeNominal === 0);
-  let mejorBat: { b: Bateria; s: number; p: number; wh: number } | null = null;
+  let mejorBat: { b: Bateria; s: number; p: number; wh: number; costo: number } | null = null;
   for (const b of candidatas) {
     const etaD = Math.sqrt(b.eficienciaIda);
     const req = (args.energiaDiariaWh * args.diasAutonomia) / (b.dodRecomendada * etaD * etaInv);
     const s = vSis / b.voltajeNominal;
     const p = Math.max(1, Math.ceil(req / (b.energiaKWh * 1000 * s)));
     const wh = b.energiaKWh * 1000 * s * p;
-    if (!mejorBat || wh < mejorBat.wh) mejorBat = { b, s, p, wh };
+    // Preferencia: baterías del voltaje del sistema y pocas unidades (cada unidad extra penaliza 4 %),
+    // y evitar más de 4 ramas en paralelo
+    const costo = wh * (1 + 0.04 * (s * p - 1)) * (p > 4 ? 1.5 : 1) * (s > 1 ? 1.1 : 1);
+    if (!mejorBat || costo < mejorBat.costo) mejorBat = { b, s, p, wh, costo };
   }
   const capReq = mejorBat ? (args.energiaDiariaWh * args.diasAutonomia) / (mejorBat.b.dodRecomendada * Math.sqrt(mejorBat.b.eficienciaIda) * etaInv) : 0;
   if (!mejorBat) notas.push(`No hay baterías compatibles con ${vSis} V en el catálogo.`);
