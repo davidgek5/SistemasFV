@@ -6,7 +6,7 @@ import { TERMICO_POR_DEFECTO } from '@/engine/termico/faiman';
 import { CRITERIOS_POR_DEFECTO } from '@/engine/dimensionamiento/strings';
 import { PERDIDAS_POR_DEFECTO, type EquipoCarga } from '@/engine/tipos';
 import { BATERIAS, INVERSORES_AISLADOS, INVERSORES_RED, MODULOS, REGULADORES } from '@/catalogo/catalogo';
-import { VERSION_ESQUEMA, type Proyecto } from './esquema';
+import { DATOS_SIMULACION_POR_DEFECTO, VERSION_ESQUEMA, type Proyecto } from './esquema';
 
 export const IBARRA = { nombre: 'Ibarra, Imbabura', latitud: 0.35, longitud: -78.12, altitud: 2225, husoHorario: -5 };
 
@@ -49,6 +49,8 @@ export function proyectoNuevo(nombre = 'Proyecto nuevo'): Proyecto {
     modificado: ahora,
     ubicacion: { ...IBARRA },
     clima: null,
+    seriesAnuales: [],
+    datosSimulacion: { ...DATOS_SIMULACION_POR_DEFECTO },
     horizonte: SIN_HORIZONTE,
     carga: { modo: 'equipos', equipos: equiposEjemplo() },
     tipoSistema: 'on-grid',

@@ -190,10 +190,12 @@ export function leerNASAJson(j: any): { clima: DatosClima; avisos: string[] } {
   const col = (k: string) => (p[k] ? claves.map((c) => Number(p[k][c])) : null);
   const [lon, lat, elev] = j.geometry?.coordinates ?? [NaN, NaN, 0];
   const anio = claves[0]?.slice(0, 4);
-  return construirClima(
+  const r = construirClima(
     { ghi: col('ALLSKY_SFC_SW_DWN')!, dni: col('ALLSKY_SFC_SW_DNI'), dhi: col('ALLSKY_SFC_SW_DIFF'), tamb: col('T2M')!, viento: col('WS10M') ?? col('WS2M')! },
     { fuente: 'nasa-power', descripcion: `NASA POWER horario, año ${anio}`, latitud: lat, longitud: lon, altitud: Number(elev) || 0, desfaseSolarHoras: 0.5 },
   );
+  r.clima.anioDatos = Number(anio);
+  return r;
 }
 
 export function leerNASACsv(texto: string, sitio?: { latitud: number; longitud: number; altitud: number }): { clima: DatosClima; avisos: string[] } {
@@ -223,6 +225,7 @@ export function leerArchivoClima(nombre: string, texto: string, sitio?: { latitu
   if (t.startsWith('{')) {
     const j = JSON.parse(t);
     if (j?.outputs?.tmy_hourly) return leerPVGISJson(j);
+    if (j?.outputs?.hourly) return leerPVGISSerieJson(j);
     if (j?.properties?.parameter) return leerNASAJson(j);
     if (Array.isArray(j?.ghi) && j.ghi.length === HORAS_ANIO) return { clima: j as DatosClima, avisos: [] };
     throw new Error('JSON no reconocido (se esperaba PVGIS TMY, NASA POWER o un clima exportado por esta app).');
@@ -246,3 +249,57 @@ export function climaACsv(c: DatosClima): string {
   }
   return filas.join('\n');
 }
+
+// ───────────────────────── PVGIS series horarias (seriescalc) ─────────────────────────
+
+/** Años disponibles en PVGIS 5.3 (PVGIS-SARAH3). */
+export const PVGIS_SERIES_ANIO_MIN = 2005;
+export const PVGIS_SERIES_ANIO_MAX = 2023;
+
+/**
+ * Serie horaria real de un año (seriescalc, plano horizontal, components=1).
+ * Gb(i) = directa horizontal, Gd(i) = difusa horizontal, Gr(i) = reflejada (0 en horizontal).
+ * DNI = Gb / sin(H_sun). Las marcas de tiempo son "AAAAMMDD:HHMM" con MM = minuto del dato satelital,
+ * que se usa como desfase para la posición solar.
+ */
+export function leerPVGISSerieJson(j: any): { clima: DatosClima; avisos: string[] } {
+  const filas: any[] = j?.outputs?.hourly;
+  if (!Array.isArray(filas) || filas.length < 8760) throw new Error('El JSON no tiene el formato de serie horaria de PVGIS (outputs.hourly).');
+  const loc = j.inputs?.location ?? {};
+  const t0: string = String(filas[0].time ?? '');
+  const anio = Number(t0.slice(0, 4));
+  const minuto = Number(t0.slice(11, 13)) || 0;
+  const conComponentes = filas[0]['Gb(i)'] !== undefined;
+  const ghi: number[] = [];
+  const dni: number[] = [];
+  const dhi: number[] = [];
+  for (const f of filas) {
+    if (conComponentes) {
+      const gb = Number(f['Gb(i)']);
+      const gd = Number(f['Gd(i)']);
+      const gr = Number(f['Gr(i)'] ?? 0);
+      const h = Number(f['H_sun']);
+      ghi.push(gb + gd + gr);
+      if (h > 2) {
+        dni.push(gb / Math.sin((h * Math.PI) / 180));
+        dhi.push(gd + gr);
+      } else {
+        // Sol muy bajo: la directa se suma a la difusa para conservar la GHI
+        dni.push(0);
+        dhi.push(gb + gd + gr);
+      }
+    } else ghi.push(Number(f['G(i)']));
+  }
+  const r = construirClima(
+    { ghi, dni: conComponentes ? dni : null, dhi: conComponentes ? dhi : null, tamb: filas.map((f) => Number(f.T2m)), viento: filas.map((f) => Number(f.WS10m)) },
+    {
+      fuente: 'pvgis-serie',
+      descripcion: `PVGIS serie horaria ${anio} (${j.inputs?.meteo_data?.radiation_db ?? 'SARAH3'})`,
+      latitud: Number(loc.latitude), longitud: Number(loc.longitude), altitud: Number(loc.elevation ?? 0),
+      desfaseSolarHoras: minuto / 60,
+    },
+  );
+  r.clima.anioDatos = anio;
+  return r;
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */

@@ -4,8 +4,9 @@
  * PVGIS requiere el proxy.
  */
 import { escribirCache, leerCache } from '@/proyecto/db';
-import { leerNASAJson, leerPVGISJson } from './lectores';
-import type { DatosClima } from '@/engine/tipos';
+import { leerNASAJson, leerPVGISJson, leerPVGISSerieJson } from './lectores';
+import { redondearClima } from './variabilidad';
+import type { DatosClima, FuenteSerie, SerieAnual } from '@/engine/tipos';
 import type { PuntoHorizonte } from '@/engine/horizonte/horizonte';
 
 const r2 = (x: number) => Math.round(x * 100) / 100;
@@ -62,6 +63,40 @@ export async function descargarNASA(lat: number, lon: number, anio: number, forz
   ).catch((e) => { throw new Error(`NASA POWER: ${e.message}`); });
   const { clima, avisos } = leerNASAJson(JSON.parse(texto));
   return { clima, avisos, deCache, textoOriginal: texto };
+}
+
+export async function descargarPVGISSerie(lat: number, lon: number, anio: number, forzar = false): Promise<ResultadoDescarga> {
+  const { texto, deCache } = await obtenerJSON(`pvgis-serie:${anio}:${r2(lat)}:${r2(lon)}`, [`/api/pvgis-serie?lat=${r2(lat)}&lon=${r2(lon)}&anio=${anio}`], forzar)
+    .catch((e) => { throw new Error(`PVGIS ${anio}: ${e.message}`); });
+  const { clima, avisos } = leerPVGISSerieJson(JSON.parse(texto));
+  return { clima, avisos, deCache, textoOriginal: texto };
+}
+
+
+/**
+ * Descarga varios años, uno por petición (cada año queda en caché por separado).
+ * Secuencial para no saturar las APIs; informa el progreso.
+ */
+export async function descargarAnios(
+  fuente: FuenteSerie, lat: number, lon: number, desde: number, hasta: number,
+  alProgresar?: (hechos: number, total: number, anio: number, deCache: boolean) => void, forzar = false,
+): Promise<{ series: SerieAnual[]; avisos: string[]; errores: string[] }> {
+  const series: SerieAnual[] = [];
+  const avisos: string[] = [];
+  const errores: string[] = [];
+  const total = hasta - desde + 1;
+  for (let anio = desde; anio <= hasta; anio++) {
+    try {
+      const r = fuente === 'nasa-power' ? await descargarNASA(lat, lon, anio, forzar) : await descargarPVGISSerie(lat, lon, anio, forzar);
+      series.push({ fuente, anio, clima: redondearClima(r.clima) });
+      avisos.push(...r.avisos.map((a) => `${anio}: ${a}`));
+      alProgresar?.(anio - desde + 1, total, anio, r.deCache);
+    } catch (e) {
+      errores.push(e instanceof Error ? e.message : String(e));
+      alProgresar?.(anio - desde + 1, total, anio, false);
+    }
+  }
+  return { series, avisos, errores };
 }
 
 export interface ClimatologiaNASA {

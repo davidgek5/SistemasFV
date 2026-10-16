@@ -254,6 +254,66 @@ Se calculan con el modelo de un diodo, no con coeficientes lineales.
 - **Por factura:** los 12 valores de kWh/mes se reparten por día (los fines de semana pesan 1.1 en el
   perfil residencial y 0.45 en el comercial) y por hora, con un perfil típico normalizado.
 
+## 18. Datos multianuales, variabilidad interanual y P50/P90
+
+`src/clima/variabilidad.ts` · tests en `src/clima/variabilidad.test.ts`
+
+**Fuentes de años reales**
+- **NASA POWER** (comunidad RE): datos horarios por año, de 2001 al último año completo; por defecto se
+  usan los 5 últimos (2021–2025). Se pide un año por petición y cada año se cachea por separado, en el
+  CDN del proxy y en IndexedDB.
+- **PVGIS 5.3 `seriescalc`** (PVGIS-SARAH3, 2005–2023): se piden el plano horizontal (`angle=0`) y las
+  componentes (`components=1`), sin horizonte (`usehorizon=0`).
+  - GHI = Gb(i) + Gd(i) + Gr(i); DHI = Gd(i) + Gr(i); DNI = Gb(i)/sin(H_sun).
+  - Si H_sun ≤ 2°, la directa se suma a la difusa (DNI = 0), lo que conserva la GHI.
+  - La marca "AAAAMMDD:HHMM" trae el minuto del dato satelital (≈ :10). Se usa como desfase para la
+    posición solar (MM/60 h) en lugar de los 0.5 h habituales.
+- Los años bisiestos pierden el 29 de febrero, y todas las series se rotan a hora local (UTC−5). Se
+  guardan redondeadas a 0.1 W/m² y 0.1 °C para no inflar el proyecto.
+
+**Indicadores por año:** GHI anual y mensual, HSP = GHI/365, temperatura media, mínima y máxima, y mes
+crítico (el de menor HSP diaria).
+
+**Variabilidad interanual:** sobre la GHI anual de los N años se calculan
+  μ = media, σ = desviación estándar muestral (N − 1), CV = σ/μ.
+Por mes se calculan la media y la σ entre años.
+
+**P50 / P90 (distribución normal)**
+  σ_total = √( σ² + (u·μ)² )
+  P50 = μ
+  P90 (un año cualquiera) = μ − 1.2816 · σ_total
+  P90 (promedio de 10 años) = μ − 1.2816 · √( σ²/10 + (u·μ)² )
+
+- 1.2816 es el cuantil 0.90 de la normal estándar: la probabilidad de excedencia es del 90 %.
+- u es la incertidumbre relativa del conjunto de datos. Es editable, con valor por defecto 0 % (solo
+  variabilidad interanual); valores típicos: 3–5 % para SARAH y 5–8 % para NASA POWER. La incertidumbre
+  del dato es sistemática: no se reduce al promediar años, por eso no se divide por √10.
+- **Limitación:** con N = 5 la σ muestral tiene mucha incertidumbre (su intervalo de confianza del 90 % va
+  aproximadamente de 0.65σ a 2.4σ). Para estudios bancables se recomiendan N ≥ 10 años, o un ajuste con la
+  t de Student (P90 ≈ μ − t₀.₉₀,ₙ₋₁·σ·√(1 + 1/N)), previsto para una fase posterior.
+- El mismo método se aplica a la **energía producida** en el modo «simular todos los años»: se simulan las
+  8760 h de cada año real, y la P50/P90 sale de la serie de energías anuales. Así se incluyen las no
+  linealidades (temperatura, recorte, ventana MPPT) que la P90 de irradiación no captura.
+
+**Peor mes y peor año**
+- Peor año: el de menor GHI anual.
+- Peor mes: el par mes-año con menor HSP diaria en toda la serie.
+- Peor mes promedio: el mes calendario con menor HSP media entre años.
+- Para dimensionar off-grid, la HSP en el plano del mes elegido se estima con transposición isotrópica
+  sobre totales mensuales (§16). El diseño se comprueba después simulando el peor año, o todos los años,
+  hora a hora.
+
+**Promedio multianual hora a hora:** G_prom(h) = (1/N) Σ G_año(h), para la misma hora local de cada año.
+- La energía anual simulada con el promedio queda muy cerca de la media de las simulaciones por año. En el
+  caso de prueba la diferencia es de 0.05 %.
+- En cambio, el promedio suaviza la variabilidad horaria y diaria: hay menos horas de cielo muy claro o
+  muy cubierto. Por eso subestima el recorte, los días sin sol y la energía no suministrada en off-grid.
+  Para off-grid se recomienda «simular todos los años» o el peor año.
+
+**Comparación de fuentes:** diferencia mensual = (GHI_otra − GHI_ref)/GHI_ref, con el clima principal
+(PVGIS TMY) como referencia y los promedios multianuales de NASA y de las series de PVGIS como
+alternativas.
+
 ## Referencias
 
 1. Reda, I., Andreas, A. (2004). Solar Energy 76(5), 577–589.
@@ -269,3 +329,6 @@ Se calculan con el modelo de un diodo, no con coeficientes lineales.
 11. Bishop, J.W. (1988). Solar Cells 25(1), 73–89.
 12. Holmgren, W., Hansen, C., Mikofski, M. (2018). pvlib python. JOSS 3(29), 884.
 13. PVsyst SA. *PVsyst 7/8 Help* — modelos de pérdidas, IAM, temperatura y horizonte.
+14. Huld, T. et al. (2012). A new solar radiation database for estimating PV performance in Europe and Africa. Solar Energy 86, 1803–1815 (PVGIS).
+15. Stackhouse, P. et al. NASA POWER — Prediction Of Worldwide Energy Resources, Methodology (v2.x).
+16. Dobos, A., Gilman, P., Kasberg, M. (2012). P50/P90 Analysis for Solar Energy Systems Using the System Advisor Model. NREL/CP-6A20-54488.

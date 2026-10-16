@@ -1,6 +1,6 @@
 /** Persistencia local en IndexedDB (Dexie): proyectos y caché de descargas meteorológicas. */
 import Dexie, { type Table } from 'dexie';
-import type { Proyecto } from './esquema';
+import { actualizarProyecto, type Proyecto } from './esquema';
 
 export interface EntradaCache {
   clave: string; // p. ej. "pvgis-tmy:0.35:-78.12"
@@ -20,7 +20,7 @@ class BaseDatos extends Dexie {
 export const db = new BaseDatos();
 
 export async function listarProyectos(): Promise<Proyecto[]> {
-  return db.proyectos.orderBy('modificado').reverse().toArray();
+  return (await db.proyectos.orderBy('modificado').reverse().toArray()).map(actualizarProyecto);
 }
 
 export async function guardarProyecto(p: Proyecto): Promise<void> {

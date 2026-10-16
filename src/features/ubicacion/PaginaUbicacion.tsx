@@ -11,6 +11,8 @@ import { NOMBRES_MES } from '@/engine/calendario';
 import { descargarArchivo, fmt, nombreArchivo } from '@/lib/formato';
 import { alturaHorizonte, prepararPerfil } from '@/engine/horizonte/horizonte';
 
+import { DatosMultianuales } from './DatosMultianuales';
+
 const Mapa = lazy(() => import('./Mapa'));
 
 type Fuente = 'pvgis' | 'nasa' | 'archivo' | 'ejemplo';
@@ -123,7 +125,7 @@ export default function PaginaUbicacion() {
         </Tarjeta>
       </div>
 
-      <Tarjeta className="mt-4" titulo="Datos meteorológicos" subtitulo="Año de 8760 h en hora local. Las descargas se guardan en el dispositivo para usarlas sin internet."
+      <Tarjeta className="mt-4" titulo="Datos meteorológicos principales" subtitulo="Año típico (TMY) de 8760 h en hora local. Las descargas se guardan en el dispositivo para usarlas sin internet."
         acciones={p.clima && (
           <>
             <Boton onClick={() => descargarArchivo(`clima-${nombreArchivo(p.nombre)}.csv`, climaACsv(p.clima!), 'text/csv')}>Exportar CSV</Boton>
@@ -174,6 +176,8 @@ export default function PaginaUbicacion() {
           </div>
         )}
       </Tarjeta>
+
+      <DatosMultianuales />
 
       <Tarjeta className="mt-4" titulo="Horizonte lejano" subtitulo="Montañas que tapan el sol al amanecer o al atardecer. Importante en la Sierra."
         acciones={

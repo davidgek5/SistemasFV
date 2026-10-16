@@ -15,7 +15,7 @@ pensada para proyectos en Ecuador. Toda la interfaz está en español.
 
 | Fase | Contenido | Estado |
 |---|---|---|
-| 1 | Ubicación + clima, perfil de carga, simulación on-grid y off-grid, cascada de pérdidas, validación de strings, dimensionamiento automático | ✅ |
+| 1 | Ubicación + clima (TMY y multianual NASA/PVGIS, variabilidad, P50/P90), perfil de carga, simulación on-grid y off-grid (también año a año), cascada de pérdidas, validación de strings, dimensionamiento automático | ✅ |
 | 2 | Base CEC completa, equipos propios, híbrido, bifacial, horizonte (interfaz completa), sombras detalladas, TMY de NASA | ⏳ |
 | 3 | Conductores, protecciones, economía (LCOE, VAN, TIR) y PDF | ⏳ |
 | 4 | Despliegue en Vercel con dominio | ⏳ |
@@ -25,7 +25,7 @@ pensada para proyectos en Ecuador. Toda la interfaz está en español.
 ```bash
 npm install
 npm run dev        # http://localhost:5173 (las funciones /api también corren en local)
-npm test           # 60 tests de Vitest
+npm test           # tests de Vitest
 npm run build
 ```
 
@@ -35,7 +35,7 @@ Para regenerar los valores de referencia: `pip install pvlib`, luego `npm run fi
 ## Estructura
 
 ```
-api/            Funciones serverless (Vercel): /api/pvgis-tmy, /api/pvgis-horizonte, /api/nasa-power
+api/            Funciones serverless (Vercel): /api/pvgis-tmy, /api/pvgis-serie, /api/pvgis-horizonte, /api/nasa-power
 scripts/        Generación del catálogo CEC y de los valores de referencia con pvlib
 src/engine/     Física pura (sin React): solar, irradiancia, térmico, módulo, inversor, batería, carga…
 src/clima/      Lectores PVGIS/NASA (JSON y CSV), resumen mensual, descargas con caché

@@ -4,14 +4,32 @@
  */
 import { z } from 'zod';
 import type {
-  BancoBaterias, DatosClima, DefinicionCarga, Generador, InversorAislado, InversorRed, ModalidadRed, Regulador,
+  BancoBaterias, DatosClima, DefinicionCarga, FuenteSerie, Generador, InversorAislado, InversorRed, ModalidadRed, Regulador, SerieAnual,
 } from '@/engine/tipos';
 import type { PerfilHorizonte } from '@/engine/horizonte/horizonte';
 import type { CriteriosStrings } from '@/engine/dimensionamiento/strings';
 
-export const VERSION_ESQUEMA = 1;
+export const VERSION_ESQUEMA = 2;
 
 export type TipoSistema = 'on-grid' | 'off-grid' | 'hibrido';
+
+/**
+ * Datos con los que se simula:
+ *  - principal: el año del módulo «Datos meteorológicos» (TMY de PVGIS, CSV o ejemplo)
+ *  - anio: un año concreto de las series multianuales
+ *  - promedio: promedio horario de los años de una fuente
+ *  - todos: una simulación por cada año (producción año a año, P50/P90)
+ */
+export type ModoDatosSimulacion = 'principal' | 'anio' | 'promedio' | 'todos';
+
+export interface DatosSimulacion {
+  modo: ModoDatosSimulacion;
+  fuente: FuenteSerie;
+  anio: number | null;
+  incertidumbreDato: number; // fracción, para P90 (0 = solo variabilidad interanual)
+}
+
+export const DATOS_SIMULACION_POR_DEFECTO: DatosSimulacion = { modo: 'principal', fuente: 'nasa-power', anio: null, incertidumbreDato: 0 };
 
 export interface Proyecto {
   schemaVersion: number;
@@ -23,6 +41,8 @@ export interface Proyecto {
   modificado: string;
   ubicacion: { nombre: string; latitud: number; longitud: number; altitud: number; husoHorario: number };
   clima: DatosClima | null;
+  seriesAnuales: SerieAnual[];
+  datosSimulacion: DatosSimulacion;
   horizonte: PerfilHorizonte;
   carga: DefinicionCarga;
   tipoSistema: TipoSistema;
@@ -64,6 +84,11 @@ export const proyectoZ = z.object({
   modificado: z.string(),
   ubicacion: z.object({ nombre: z.string(), latitud: num.min(-90).max(90), longitud: num.min(-180).max(180), altitud: num, husoHorario: num }),
   clima: climaZ.nullable(),
+  seriesAnuales: z.array(z.object({ fuente: z.enum(['nasa-power', 'pvgis-serie']), anio: z.number().int(), clima: climaZ })),
+  datosSimulacion: z.object({
+    modo: z.enum(['principal', 'anio', 'promedio', 'todos']), fuente: z.enum(['nasa-power', 'pvgis-serie']),
+    anio: z.number().int().nullable(), incertidumbreDato: num.min(0).max(0.5),
+  }),
   horizonte: z.object({ origen: z.enum(['pvgis', 'usuario', 'ninguno']), puntos: z.array(z.object({ azimut: num, altura: num })) }),
   carga: cargaZ,
   tipoSistema: z.enum(['on-grid', 'off-grid', 'hibrido']),
@@ -83,13 +108,23 @@ export const proyectoZ = z.object({
   }),
 });
 
-/** Migraciones entre versiones del esquema (por ahora solo v1). */
+/** Migraciones entre versiones del esquema. */
 export function migrar(datos: unknown): unknown {
-  const d = datos as { schemaVersion?: number };
+  const d = datos as Record<string, unknown> & { schemaVersion?: number };
   if (!d || typeof d !== 'object') throw new Error('El archivo no contiene un proyecto.');
   if (d.schemaVersion === undefined) throw new Error('Falta schemaVersion: no es un proyecto de SistemasFV.');
   if (d.schemaVersion > VERSION_ESQUEMA) throw new Error(`El proyecto es de una versión más nueva de la app (v${d.schemaVersion}).`);
-  return d;
+  let r = { ...d };
+  if (r.schemaVersion === 1) {
+    // v2: series multianuales y elección de datos para simular
+    r = { ...r, schemaVersion: 2, seriesAnuales: [], datosSimulacion: { ...DATOS_SIMULACION_POR_DEFECTO } };
+  }
+  return r;
+}
+
+/** Aplica las migraciones a un proyecto ya guardado en el dispositivo. */
+export function actualizarProyecto(p: Proyecto): Proyecto {
+  return (p.schemaVersion === VERSION_ESQUEMA ? p : migrar(p)) as Proyecto;
 }
 
 export function validarProyecto(datos: unknown): Proyecto {

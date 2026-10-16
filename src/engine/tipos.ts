@@ -10,7 +10,7 @@ export const HORAS_ANIO = 8760;
 
 // ───────────────────────── Clima ─────────────────────────
 
-export type FuenteClima = 'pvgis-tmy' | 'nasa-power' | 'csv-pvgis' | 'csv-nasa' | 'csv-generico' | 'sintetico';
+export type FuenteClima = 'pvgis-tmy' | 'pvgis-serie' | 'nasa-power' | 'csv-pvgis' | 'csv-nasa' | 'csv-generico' | 'sintetico' | 'promedio';
 
 /**
  * Año meteorológico de 8760 h en HORA LOCAL (índice 0 = 1 de enero 00:00–01:00 local).
@@ -37,6 +37,17 @@ export interface DatosClima {
   viento: number[];
   /** Meses de origen (TMY) o año de los datos, solo informativo. */
   origenMeses?: { mes: number; anio: number }[];
+  /** Año real de los datos (series anuales de NASA POWER o PVGIS). */
+  anioDatos?: number;
+}
+
+/** Serie meteorológica de un año real (NASA POWER o PVGIS seriescalc). */
+export type FuenteSerie = 'nasa-power' | 'pvgis-serie';
+
+export interface SerieAnual {
+  fuente: FuenteSerie;
+  anio: number;
+  clima: DatosClima;
 }
 
 // ───────────────────────── Equipos ─────────────────────────

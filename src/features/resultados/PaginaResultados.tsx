@@ -4,7 +4,10 @@ import { useNavigate } from 'react-router-dom';
 import { Titulo } from '@/components/Layout';
 import { Aviso, Boton, Indicador, Rejilla, Tabla, Tarjeta } from '@/components/ui';
 import { COLORES, Grafico } from '@/components/Grafico';
-import { useProyecto, useResultadoDesactualizado } from '@/proyecto/store';
+import { useProyecto, useResultadoDesactualizado, type ResumenSimAnio } from '@/proyecto/store';
+import { puedeSimular, NOMBRE_FUENTE } from '@/proyecto/entrada';
+import { SelectorDatosSimulacion } from '@/components/SelectorDatosSimulacion';
+import { excedencia } from '@/clima/variabilidad';
 import { MES_DE_HORA, NOMBRES_MES } from '@/engine/calendario';
 import type { ResultadoSimulacion } from '@/engine/tipos';
 import { descargarArchivo, energia, fmt, nombreArchivo, pct } from '@/lib/formato';
@@ -16,25 +19,33 @@ export default function PaginaResultados() {
   const error = useProyecto((s) => s.errorSimulacion);
   const simular = useProyecto((s) => s.simular);
   const desactualizado = useResultadoDesactualizado();
+  const progreso = useProyecto((s) => s.progreso);
+  const etiqueta = useProyecto((s) => s.etiquetaDatos);
+  const anuales = useProyecto((s) => s.resultadosAnuales);
   const navegar = useNavigate();
+  const listo = puedeSimular(p);
 
   useEffect(() => {
-    if (!r && !simulando && p.clima && p.tipoSistema !== 'hibrido') simular();
+    if (!r && !simulando && listo && p.datosSimulacion.modo !== 'todos') simular();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>
-      <Titulo titulo="Resultados" subtitulo={r ? `Simulación horaria de 8760 h · ${r.tipo === 'on-grid' ? 'conectado a la red' : 'aislado'} · ${fmt(r.potenciaPicoKWp, 2)} kWp · calculado en ${fmt(r.duracionMs, 0)} ms` : 'Simulación horaria de 8760 h.'}
+      <Titulo titulo="Resultados" subtitulo={r ? `Simulación horaria de 8760 h · ${r.tipo === 'on-grid' ? 'conectado a la red' : 'aislado'} · ${fmt(r.potenciaPicoKWp, 2)} kWp · datos: ${etiqueta ?? '—'} · ${fmt(r.duracionMs, 0)} ms` : 'Simulación horaria de 8760 h.'}
         acciones={
           <>
             {r && <Boton onClick={() => exportarCSV(r, p.nombre)}>Exportar 8760 h (CSV)</Boton>}
-            <Boton variante="primario" disabled={simulando || !p.clima} onClick={simular}>{simulando ? 'Simulando…' : r ? 'Volver a simular' : 'Simular'}</Boton>
+            <Boton variante="primario" disabled={simulando || !listo} onClick={simular}>{simulando ? 'Simulando…' : r ? 'Volver a simular' : 'Simular'}</Boton>
           </>
         } />
-      {!p.clima && <Aviso tipo="aviso">Faltan los datos meteorológicos. <button className="underline" onClick={() => navegar('/ubicacion')}>Ir a Ubicación</button></Aviso>}
-      {error && <Aviso tipo="error">{error}</Aviso>}
+      <Tarjeta className="mb-4"><SelectorDatosSimulacion /></Tarjeta>
+      {!listo && <div className="mb-3"><Aviso tipo="aviso">Faltan los datos meteorológicos elegidos. <button className="underline" onClick={() => navegar('/ubicacion')}>Ir a Ubicación</button></Aviso></div>}
+      {progreso && <div className="mb-3"><Aviso tipo="info">{progreso}</Aviso></div>}
+      {error && <div className="mb-3"><Aviso tipo="error">{error}</Aviso></div>}
       {desactualizado && <div className="mb-3"><Aviso tipo="aviso">Cambiaste el proyecto después de esta simulación. Pulsa «Volver a simular».</Aviso></div>}
-      {p.clima?.fuente === 'sintetico' && <div className="mb-3"><Aviso tipo="aviso">Resultados con clima SINTÉTICO de prueba: no usar para diseño.</Aviso></div>}
+      {p.clima?.fuente === 'sintetico' && p.datosSimulacion.modo === 'principal' && <div className="mb-3"><Aviso tipo="aviso">Resultados con clima SINTÉTICO de prueba: no usar para diseño.</Aviso></div>}
+      {r && anuales && anuales.length > 0 && <AnioAAnio anuales={anuales} tipo={r.tipo} incertidumbre={p.datosSimulacion.incertidumbreDato} fuente={NOMBRE_FUENTE[p.datosSimulacion.fuente]} />}
+      {r && anuales && anuales.length > 0 && <h2 className="mb-3 mt-6 text-lg font-semibold">Detalle del año promedio</h2>}
       {r && <Contenido r={r} />}
     </>
   );
@@ -259,4 +270,57 @@ function exportarCSV(r: ResultadoSimulacion, nombre: string) {
     filas.push([i, f.getUTCMonth() + 1, f.getUTCDate(), f.getUTCHours(), h.poa[i].toFixed(1), h.gEf[i].toFixed(1), h.tCelda[i].toFixed(2), h.pDC[i].toFixed(1), h.pSalida[i].toFixed(1), h.carga[i].toFixed(1), h.autoconsumo[i].toFixed(1), h.inyeccion[i].toFixed(1), h.compra[i].toFixed(1), h.soc[i].toFixed(4), h.noSuministrada[i].toFixed(1), h.desperdiciada[i].toFixed(1)].join(','));
   }
   descargarArchivo(`resultados-${nombreArchivo(nombre)}.csv`, filas.join('\n'), 'text/csv');
+}
+
+/** Producción de cada año real simulado, con P50/P90 de energía. */
+function AnioAAnio({ anuales, tipo, incertidumbre, fuente }: { anuales: ResumenSimAnio[]; tipo: string; incertidumbre: number; fuente: string }) {
+  const onGrid = tipo === 'on-grid';
+  const e = excedencia(anuales.map((a) => a.eSalida), incertidumbre);
+  const peor = onGrid
+    ? anuales.reduce((m, a) => (a.eSalida < m.eSalida ? a : m))
+    : anuales.reduce((m, a) => (a.noSuministrada > m.noSuministrada ? a : m));
+  const opcion = useMemo(() => ({
+    tooltip: { trigger: 'axis', valueFormatter: (v: number) => `${fmt(v, 0)} kWh` },
+    legend: { data: [onGrid ? 'Producción' : 'Entregada a la carga', ...(onGrid ? [] : ['No suministrada'])] },
+    xAxis: { type: 'category', data: anuales.map((a) => String(a.anio)) },
+    yAxis: { type: 'value', name: 'kWh', scale: onGrid },
+    series: [
+      {
+        name: onGrid ? 'Producción' : 'Entregada a la carga', type: 'bar', stack: 'e', data: anuales.map((a) => Math.round(a.eSalida)),
+        itemStyle: { color: onGrid ? COLORES.solar : COLORES.verde, borderRadius: onGrid ? [4, 4, 0, 0] : 0 },
+        markLine: onGrid ? {
+          symbol: 'none', label: { formatter: (q: { name: string }) => q.name, position: 'insideEndTop' },
+          data: [{ name: `P50 ${fmt(e.p50, 0)}`, yAxis: Math.round(e.p50), lineStyle: { color: COLORES.azul } }, { name: `P90 ${fmt(e.p90, 0)}`, yAxis: Math.round(e.p90), lineStyle: { color: COLORES.rojo, type: 'dashed' } }],
+        } : undefined,
+      },
+      ...(onGrid ? [] : [{ name: 'No suministrada', type: 'bar', stack: 'e', data: anuales.map((a) => Math.round(a.noSuministrada)), itemStyle: { color: COLORES.rojo, borderRadius: [4, 4, 0, 0] } }]),
+    ],
+  }), [anuales, onGrid, e.p50, e.p90]);
+  return (
+    <Tarjeta className="mb-4" titulo={`Año a año (${fuente}, ${anuales.length} años)`} subtitulo="Una simulación completa de 8760 h por cada año real.">
+      <Rejilla>
+        <Indicador etiqueta={onGrid ? 'Producción P50' : 'Energía entregada P50'} valor={energia(e.p50)} detalle={`${fmt(e.p50 / (anuales[0].eSalida / anuales[0].rendimiento), 0)} kWh/kWp`} />
+        <Indicador etiqueta="Producción P90 (1 año)" valor={energia(e.p90)} detalle={`${pct(e.p90 / e.p50 - 1, 1)} · P90 10 años ${energia(e.p90Decenal)}`} />
+        <Indicador etiqueta="Variabilidad interanual" valor={pct(e.cv, 1)} detalle={`Rango ${energia(e.minimo)} – ${energia(e.maximo)}`} />
+        {onGrid
+          ? <Indicador etiqueta="Peor año" valor={String(peor.anio)} detalle={`${energia(peor.eSalida)} · PR ${pct(peor.pr)}`} tono="aviso" />
+          : <Indicador etiqueta="Peor año (déficit)" valor={String(peor.anio)} detalle={`${energia(peor.noSuministrada)} no suministrada · ${peor.diasConDeficit} días`} tono={peor.noSuministrada > 0 ? 'mal' : 'bien'} />}
+      </Rejilla>
+      <div className="mt-3"><Grafico opcion={opcion} alto={280} /></div>
+      <div className="mt-3">
+        <Tabla
+          cabeceras={onGrid ? ['Año', 'GHI kWh/m²', 'Plano kWh/m²', 'Producción kWh', 'vs. P50', 'kWh/kWp', 'PR', 'Fracción solar']
+            : ['Año', 'GHI kWh/m²', 'Plano kWh/m²', 'A la carga kWh', 'No sumin. kWh', 'Días con déficit', 'Fracción solar', 'Peor mes (déficit)']}
+          filas={anuales.map((a) => {
+            const d = e.p50 > 0 ? a.eSalida / e.p50 - 1 : 0;
+            const iPeor = a.noSumMensual.indexOf(Math.max(...a.noSumMensual));
+            return onGrid
+              ? [a.anio === peor.anio ? <b key="a">{a.anio}</b> : String(a.anio), fmt(a.ghi, 0), fmt(a.poa, 0), fmt(a.eSalida, 0), `${d > 0 ? '+' : ''}${pct(d, 1)}`, fmt(a.rendimiento, 0), pct(a.pr), pct(a.fraccionSolar)]
+              : [a.anio === peor.anio ? <b key="a">{a.anio}</b> : String(a.anio), fmt(a.ghi, 0), fmt(a.poa, 0), fmt(a.eSalida, 0), fmt(a.noSuministrada, 1), fmt(a.diasConDeficit, 0), pct(a.fraccionSolar, 2), a.noSuministrada > 0 ? `${NOMBRES_MES[iPeor]} (${fmt(a.noSumMensual[iPeor], 1)} kWh)` : '—'];
+          })}
+        />
+      </div>
+      <p className="mt-2 text-xs text-slate-500">P50/P90 de energía con distribución normal sobre los años simulados{incertidumbre > 0 ? ` más ${pct(incertidumbre, 1)} de incertidumbre del dato` : ''} (MODELOS.md §18).</p>
+    </Tarjeta>
+  );
 }

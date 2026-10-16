@@ -4,7 +4,10 @@ import { useNavigate } from 'react-router-dom';
 import { Titulo } from '@/components/Layout';
 import { Aviso, Boton, CampoNumero, Indicador, Insignia, Interruptor, Rejilla, Segmentado, Selector, Tabla, Tarjeta } from '@/components/ui';
 import { useProyecto } from '@/proyecto/store';
-import { cargaDelProyecto } from '@/proyecto/entrada';
+import { cargaDelProyecto, climaParaSimular, fuentesDisponibles, NOMBRE_FUENTE, puedeSimular, seriesDeFuente } from '@/proyecto/entrada';
+import { SelectorDatosSimulacion } from '@/components/SelectorDatosSimulacion';
+import { analizar } from '@/clima/variabilidad';
+import { NOMBRES_MES } from '@/engine/calendario';
 import type { TipoSistema } from '@/proyecto/esquema';
 import { BATERIAS, INVERSORES_AISLADOS, INVERSORES_RED, MODULOS, REGULADORES, nombreEquipo } from '@/catalogo/catalogo';
 import { PRESETS_MONTAJE, type TipoMontaje } from '@/engine/termico/faiman';
@@ -23,6 +26,7 @@ export default function PaginaSistema() {
   const navegar = useNavigate();
   const [cobertura, setCobertura] = useState(1);
   const [mensajesDim, setMensajesDim] = useState<string[]>([]);
+  const [baseDiseno, setBaseDiseno] = useState<'activo' | 'peorMes' | 'peorAnio'>('activo');
   const g = p.generador;
   const setGen = (c: Partial<typeof g>) => actualizar((x) => ({ ...x, generador: { ...x.generador, ...c } }));
   const setPerd = (c: Partial<Perdidas>) => actualizar((x) => ({ ...x, generador: { ...x.generador, perdidas: { ...x.generador.perdidas, ...c } } }));
@@ -33,8 +37,23 @@ export default function PaginaSistema() {
   const nMod = g.nSerie * g.nParalelo;
   const kWp = (nMod * g.modulo.pNom) / 1000;
   const carga = useMemo(() => cargaDelProyecto(p).estadisticas, [p.carga]); // eslint-disable-line react-hooks/exhaustive-deps
-  const clima = useMemo(() => (p.clima ? resumenMensual(p.clima) : null), [p.clima]);
+  const hayDatos = puedeSimular(p) || !!p.clima;
+  const climaSim = useMemo(() => { try { return climaParaSimular(p); } catch { return null; } }, [p.clima, p.seriesAnuales, p.datosSimulacion]); // eslint-disable-line react-hooks/exhaustive-deps
+  const clima = useMemo(() => (climaSim ? resumenMensual(climaSim.clima) : null), [climaSim]);
   const hsp = useMemo(() => (clima ? hspPlanoMensual(clima.meses.map((m) => m.ghi), clima.meses.map((m) => m.dhi), g.inclinacion, g.albedo[0]) : null), [clima, g.inclinacion, g.albedo]);
+  // Base de diseño off-grid a partir de las series multianuales (fuente elegida o la primera disponible)
+  const fuenteSeries = fuentesDisponibles(p).includes(p.datosSimulacion.fuente) ? p.datosSimulacion.fuente : fuentesDisponibles(p)[0];
+  const multianual = useMemo(() => {
+    if (!fuenteSeries) return null;
+    const series = seriesDeFuente(p, fuenteSeries);
+    const a = analizar(series);
+    const hspDe = (ghi: number[], dhi: number[]) => hspPlanoMensual(ghi, dhi, g.inclinacion, g.albedo[0]);
+    let peorMes = { anio: 0, mes: 0, hsp: Infinity };
+    for (const y of a.anios) hspDe(y.ghiMensual, y.dhiMensual).forEach((h, m) => { if (h < peorMes.hsp) peorMes = { anio: y.anio, mes: m, hsp: h }; });
+    const hPeorAnio = hspDe(a.peorAnio.ghiMensual, a.peorAnio.dhiMensual);
+    const mPeorAnio = hPeorAnio.indexOf(Math.min(...hPeorAnio));
+    return { fuente: fuenteSeries, peorMes, peorAnio: { anio: a.peorAnio.anio, mes: mPeorAnio, hsp: hPeorAnio[mPeorAnio] } };
+  }, [fuenteSeries, p.seriesAnuales, g.inclinacion, g.albedo]); // eslint-disable-line react-hooks/exhaustive-deps
   const tMinSitio = clima ? Math.floor(clima.anual.tmin) - 2 : null;
 
   const verificaciones = useMemo(
@@ -44,7 +63,7 @@ export default function PaginaSistema() {
   const rango = useMemo(() => rangoSerie(g.modulo, p.onGrid.inversor, p.criteriosStrings), [g.modulo, p.onGrid.inversor, p.criteriosStrings]);
 
   const dimensionar = () => {
-    if (!hsp) return setMensajesDim(['Primero carga los datos meteorológicos.']);
+    if (!hsp) return setMensajesDim(['Primero carga los datos meteorológicos (o elige datos multianuales descargados).']);
     if (p.tipoSistema === 'on-grid') {
       const hspAnual = hsp.reduce((a, b, m) => a + b * [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m], 0) / 365;
       const r = proponerOnGrid(carga.energiaAnual * cobertura, hspAnual, g.modulo, INVERSORES_RED, p.criteriosStrings);
@@ -56,8 +75,15 @@ export default function PaginaSistema() {
         ...r.notas,
       ]);
     } else {
+      let hspDiseno = Math.min(...hsp);
+      let textoBase = `mes crítico de los datos de simulación (${NOMBRES_MES[hsp.indexOf(hspDiseno)]})`;
+      if (baseDiseno !== 'activo' && multianual) {
+        const b = baseDiseno === 'peorMes' ? multianual.peorMes : multianual.peorAnio;
+        hspDiseno = b.hsp;
+        textoBase = baseDiseno === 'peorMes' ? `peor mes de la serie: ${NOMBRES_MES[b.mes]} ${b.anio}` : `mes crítico del peor año ${b.anio} (${NOMBRES_MES[b.mes]})`;
+      }
       const r = proponerOffGrid({
-        energiaDiariaWh: carga.energiaDiariaPromedio, hspPlanoMesCritico: Math.min(...hsp), potenciaPicoCargaW: carga.potenciaPicoSimultanea,
+        energiaDiariaWh: carga.energiaDiariaPromedio, hspPlanoMesCritico: hspDiseno, potenciaPicoCargaW: carga.potenciaPicoSimultanea,
         potenciaArranqueW: carga.potenciaArranque, diasAutonomia: p.offGrid.diasAutonomia, modulo: g.modulo, baterias: BATERIAS,
         reguladores: REGULADORES, inversores: INVERSORES_AISLADOS, tAmbMin: p.criteriosStrings.tAmbMin, quimica: p.offGrid.banco.bateria.quimica,
       });
@@ -71,7 +97,7 @@ export default function PaginaSistema() {
         },
       }));
       setMensajesDim([
-        `Energía diaria ${fmt(r.energiaDiariaWh / 1000, 2)} kWh; mes crítico HSP ${fmt(Math.min(...hsp), 2)} → ${fmt(r.potenciaFVkWp, 2)} kWp (PR aislado 0.65).`,
+        `Energía diaria ${fmt(r.energiaDiariaWh / 1000, 2)} kWh; base de diseño: ${textoBase}, HSP en el plano ${fmt(hspDiseno, 2)} → ${fmt(r.potenciaFVkWp, 2)} kWp (PR aislado 0.65).`,
         `Banco requerido ${fmt(r.capacidadRequeridaWh / 1000, 1)} kWh para ${p.offGrid.diasAutonomia} día(s) de autonomía${r.bateria ? `: ${r.bateriasSerie}S × ${r.bateriasParalelo}P ${nombreEquipo(r.bateria)}` : ''}.`,
         ...r.notas,
       ]);
@@ -100,11 +126,30 @@ export default function PaginaSistema() {
               <CampoNumero etiqueta="Cobertura objetivo del consumo" valor={cobertura * 100} unidad="%" min={5} max={200} onChange={(v) => setCobertura(v / 100)} />
             </>
           ) : (
-            <CampoNumero etiqueta="Días de autonomía" valor={p.offGrid.diasAutonomia} min={0.5} max={10} unidad="días" onChange={(v) => setOff({ diasAutonomia: v })} />
+            <>
+              <CampoNumero etiqueta="Días de autonomía" valor={p.offGrid.diasAutonomia} min={0.5} max={10} unidad="días" onChange={(v) => setOff({ diasAutonomia: v })} />
+              <Selector etiqueta="Base de diseño (irradiación)" valor={baseDiseno} onChange={setBaseDiseno}
+                opciones={[
+                  { valor: 'activo', texto: 'Mes crítico de los datos de simulación' },
+                  { valor: 'peorMes', texto: multianual ? `Peor mes multianual (${NOMBRES_MES[multianual.peorMes.mes]} ${multianual.peorMes.anio})` : 'Peor mes multianual (sin años)', disabled: !multianual },
+                  { valor: 'peorAnio', texto: multianual ? `Peor año (${multianual.peorAnio.anio})` : 'Peor año (sin años)', disabled: !multianual },
+                ]}
+                ayuda={multianual ? `Series de ${NOMBRE_FUENTE[multianual.fuente]}. HSP en el plano: peor mes ${fmt(multianual.peorMes.hsp, 2)} · peor año ${fmt(multianual.peorAnio.hsp, 2)}` : 'Descarga años en Ubicación → Datos multianuales'} />
+            </>
           )}
-          <div className="flex items-end"><Boton onClick={dimensionar} disabled={!p.clima}>Dimensionar automáticamente</Boton></div>
+          <div className="flex items-end"><Boton onClick={dimensionar} disabled={!hsp}>Dimensionar automáticamente</Boton></div>
         </div>
-        {!p.clima && <div className="mt-3"><Aviso tipo="aviso">Carga los datos meteorológicos en «Ubicación» para dimensionar y simular.</Aviso></div>}
+        <div className="mt-4 border-t border-slate-100 pt-3 dark:border-slate-800"><SelectorDatosSimulacion /></div>
+        {!hayDatos && <div className="mt-3"><Aviso tipo="aviso">Carga los datos meteorológicos en «Ubicación» para dimensionar y simular.</Aviso></div>}
+        {p.tipoSistema === 'off-grid' && multianual && (
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-slate-500">Comprobar el diseño con el peor año:</span>
+            <Boton onClick={() => { actualizar((x) => ({ ...x, datosSimulacion: { ...x.datosSimulacion, modo: 'anio', fuente: multianual.fuente, anio: multianual.peorAnio.anio } })); navegar('/resultados'); }}>
+              Simular {multianual.peorAnio.anio}
+            </Boton>
+            <Boton onClick={() => { actualizar((x) => ({ ...x, datosSimulacion: { ...x.datosSimulacion, modo: 'todos', fuente: multianual.fuente } })); navegar('/resultados'); }}>Simular todos los años</Boton>
+          </div>
+        )}
         {mensajesDim.length > 0 && <div className="mt-3"><Aviso tipo="info"><ul className="list-disc space-y-1 pl-4">{mensajesDim.map((m, i) => <li key={i}>{m}</li>)}</ul></Aviso></div>}
       </Tarjeta>
 
