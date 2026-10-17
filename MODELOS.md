@@ -285,9 +285,12 @@ Por mes se calculan la media y la σ entre años.
   P90 (promedio de 10 años) = μ − 1.2816 · √( σ²/10 + (u·μ)² )
 
 - 1.2816 es el cuantil 0.90 de la normal estándar: la probabilidad de excedencia es del 90 %.
-- u es la incertidumbre relativa del conjunto de datos. Es editable, con valor por defecto 0 % (solo
-  variabilidad interanual); valores típicos: 3–5 % para SARAH y 5–8 % para NASA POWER. La incertidumbre
-  del dato es sistemática: no se reduce al promediar años, por eso no se divide por √10.
+- u es la incertidumbre relativa del conjunto de datos, editable por fuente. Por defecto vale **5 % para
+  NASA POWER y 4 % para PVGIS-SARAH**: los valores típicos de sesgo y error frente a mediciones en tierra
+  son de 3–5 % para SARAH y de 5–8 % para NASA POWER. La interfaz muestra el desglose del P90. La
+  incertidumbre del dato es sistemática: no se reduce al promediar años, por eso no se divide por √10.
+- Los meses y años excluidos en el control de calidad (§19) no entran en μ ni en σ. En la GHI anual de un
+  año con un mes excluido, ese mes se reemplaza por la media de los demás años en el mismo mes.
 - **Limitación:** con N = 5 la σ muestral tiene mucha incertidumbre (su intervalo de confianza del 90 % va
   aproximadamente de 0.65σ a 2.4σ). Para estudios bancables se recomiendan N ≥ 10 años, o un ajuste con la
   t de Student (P90 ≈ μ − t₀.₉₀,ₙ₋₁·σ·√(1 + 1/N)), previsto para una fase posterior.
@@ -310,9 +313,41 @@ Por mes se calculan la media y la σ entre años.
   muy cubierto. Por eso subestima el recorte, los días sin sol y la energía no suministrada en off-grid.
   Para off-grid se recomienda «simular todos los años» o el peor año.
 
-**Comparación de fuentes:** diferencia mensual = (GHI_otra − GHI_ref)/GHI_ref, con el clima principal
-(PVGIS TMY) como referencia y los promedios multianuales de NASA y de las series de PVGIS como
-alternativas.
+**Comparación de fuentes:**
+- Se comparan tres series: PVGIS TMY, el promedio de NASA POWER y el promedio de las series de PVGIS.
+- Diferencia mensual = (GHI_fuente − GHI_TMY)/GHI_TMY, con PVGIS TMY como referencia. También se muestra
+  la diferencia NASA vs. series de PVGIS.
+- Si los datos principales no son el TMY de PVGIS, el TMY se carga aparte (desde la caché si ya se
+  descargó) sin cambiar los datos principales.
+- Por defecto, NASA y las series de PVGIS se promedian solo sobre los años comunes, para que su diferencia
+  no dependa de qué años se descargaron.
+
+## 19. Control de calidad de las series anuales
+
+`src/clima/calidad.ts` · tests en `src/clima/calidad.test.ts`
+
+| Control | Criterio | Qué detecta |
+|---|---|---|
+| Horas válidas | 1 − (horas con valor de relleno en GHI) / horas del archivo | Huecos. El valor de relleno se toma de `header.fill_value` de NASA (−999 por defecto). |
+| Límites físicos (BSRN) | GHI < S₀·1.5·μ₀^1.2 + 100; DHI < S₀·0.95·μ₀^1.2 + 50; DNI < S₀; −40 < T < 50 °C; 0 ≤ v < 40 m/s | Valores imposibles. Ref.: Long & Dutton (2002), BSRN *physically possible limits*. |
+| Irradiancia nocturna | GHI > 10 W/m² con el sol > 2° bajo el horizonte durante toda la hora (inicio, mitad y fin del intervalo) | Desfase horario: UTC/LST mal declarado o rotación incorrecta. |
+| Mes atípico | \|z\| > 2, con z = (x − μ_otros)/max(σ_otros, 0.02·μ_otros) | Meses anómalos (p. ej. datos provisionales). |
+| Preliminar | NASA declara una fuente casi en tiempo real (FLASHFlux, GEOS-IT, NRT) en `header.sources` o en los mensajes, o el año terminó hace menos de 12 meses | Datos que NASA reemplazará cuando procese los definitivos (CERES SYN1deg, con meses de retraso). |
+
+- **Por qué se deja un año fuera.** Con la σ de todos los años incluido el evaluado, un valor aislado nunca
+  supera |z| = (n − 1)/√n: 1.79 con 5 años. Así, un mes un 22 % por encima del resto no se marcaría nunca.
+  Por eso z se calcula con la media y la desviación de los **otros** años. El piso de σ (2 % de la media)
+  evita marcar diferencias minúsculas cuando los otros años son casi idénticos.
+- **Referencia horaria.** NASA devuelve `header.time_standard`. Si fuera LST (hora solar estándar), los
+  datos se desplazan round(lon/15) h en lugar de tratarse como UTC.
+- **Exclusiones.** El usuario puede excluir un mes o un año completo. Lo excluido no cuenta en los
+  promedios mensuales, el promedio horario, P50/P90, el peor mes, el peor año ni el modo «simular todos
+  los años». Un año excluido sí se puede simular explícitamente («un año concreto»).
+- **Diagnóstico de un mes anómalo** (p. ej. diciembre del último año de NASA):
+  1. revisar las horas válidas y la irradiancia nocturna, que descartan errores de lectura y de huso;
+  2. revisar si el año está marcado como preliminar;
+  3. si el mes queda fuera de 2σ de los otros años, excluirlo o volver a descargarlo («Forzar nueva
+     descarga») cuando NASA publique los datos definitivos.
 
 ## Referencias
 

@@ -37,9 +37,12 @@ export function quitarBisiesto(v: number[]): number[] {
   throw new Error(`Se esperaban 8760 u 8784 horas y hay ${v.length}.`);
 }
 
-/** Reemplaza valores faltantes (−999, NaN): irradiancia → 0, temperatura/viento → interpolación lineal. */
-export function limpiar(v: number[], tipo: 'irradiancia' | 'continua'): { v: number[]; faltantes: number } {
-  const faltante = (x: number) => !Number.isFinite(x) || x <= -998;
+/**
+ * Reemplaza valores faltantes (valor de relleno del archivo, −999 por defecto, o NaN):
+ * irradiancia → 0, temperatura/viento → interpolación lineal.
+ */
+export function limpiar(v: number[], tipo: 'irradiancia' | 'continua', relleno = -999): { v: number[]; faltantes: number } {
+  const faltante = (x: number) => !Number.isFinite(x) || x <= -998 || x === relleno;
   let faltantes = 0;
   const out = v.slice();
   for (let i = 0; i < out.length; i++) {
@@ -68,25 +71,35 @@ interface Meta {
   altitud: number;
   desfaseSolarHoras?: number;
   origenMeses?: { mes: number; anio: number }[];
+  /** Huso de los datos de origen en horas respecto a UTC (0 = UTC; LST de NASA ≈ round(lon/15)). */
+  husoOrigen?: number;
+  valorRelleno?: number;
+  preliminar?: boolean;
+  fuentesDatos?: string[];
+  mensajes?: string[];
 }
 
 /** Convierte una serie UTC a DatosClima local; si faltan DNI/DHI se obtienen con Erbs. */
 export function construirClima(s: SerieUTC, meta: Meta, huso = HUSO_ECUADOR): { clima: DatosClima; avisos: string[] } {
   const avisos: string[] = [];
-  const prep = (x: number[], tipo: 'irradiancia' | 'continua', nombre: string) => {
-    const r = limpiar(quitarBisiesto(x), tipo);
+  const faltantes = { ghi: 0, dni: 0, dhi: 0, tamb: 0, viento: 0 };
+  const rot = huso - (meta.husoOrigen ?? 0);
+  const prep = (x: number[], tipo: 'irradiancia' | 'continua', nombre: string, clave: keyof typeof faltantes) => {
+    const r = limpiar(quitarBisiesto(x), tipo, meta.valorRelleno);
+    faltantes[clave] = r.faltantes;
     if (r.faltantes > 0) avisos.push(`${nombre}: ${r.faltantes} valores faltantes corregidos.`);
-    return rotarALocal(r.v, huso);
+    return rotarALocal(r.v, rot);
   };
-  const ghi = prep(s.ghi, 'irradiancia', 'GHI').map((x) => Math.max(0, x));
-  const tamb = prep(s.tamb, 'continua', 'Temperatura');
-  const viento = prep(s.viento, 'continua', 'Viento').map((x) => Math.max(0, x));
+  const ghi = prep(s.ghi, 'irradiancia', 'GHI', 'ghi').map((x) => Math.max(0, x));
+  const tamb = prep(s.tamb, 'continua', 'Temperatura', 'tamb');
+  const viento = prep(s.viento, 'continua', 'Viento', 'viento').map((x) => Math.max(0, x));
+  if (meta.preliminar) avisos.push('La fuente declara datos casi en tiempo real (provisionales) para parte del período.');
   const desfase = meta.desfaseSolarHoras ?? 0.5;
   let dni: number[];
   let dhi: number[];
   if (s.dni && s.dhi) {
-    dni = prep(s.dni, 'irradiancia', 'DNI').map((x) => Math.max(0, x));
-    dhi = prep(s.dhi, 'irradiancia', 'DHI').map((x) => Math.max(0, x));
+    dni = prep(s.dni, 'irradiancia', 'DNI', 'dni').map((x) => Math.max(0, x));
+    dhi = prep(s.dhi, 'irradiancia', 'DHI', 'dhi').map((x) => Math.max(0, x));
   } else {
     avisos.push('El archivo no trae DNI/DHI: se calcularon con el modelo de Erbs a partir de la GHI.');
     dni = new Array(HORAS_ANIO).fill(0);
@@ -112,6 +125,7 @@ export function construirClima(s: SerieUTC, meta: Meta, huso = HUSO_ECUADOR): { 
       anioReferencia: ANIO_REFERENCIA,
       ghi, dni, dhi, tamb, viento,
       origenMeses: meta.origenMeses,
+      calidad: { horas: s.ghi.length, faltantes, preliminar: !!meta.preliminar, fuentesDatos: meta.fuentesDatos, mensajes: meta.mensajes },
     },
     avisos,
   };
@@ -183,6 +197,9 @@ export function leerPVGISCsv(texto: string): { clima: DatosClima; avisos: string
 
 export const PARAMS_NASA_HORARIO = ['ALLSKY_SFC_SW_DWN', 'ALLSKY_SFC_SW_DNI', 'ALLSKY_SFC_SW_DIFF', 'T2M', 'WS10M'];
 
+/** Fuentes de NASA POWER que indican datos casi en tiempo real (provisionales). */
+export const FUENTES_PRELIMINARES = /flash|nrt|near.?real|fp-?it|geos.?it|provisional|prelim/i;
+
 export function leerNASAJson(j: any): { clima: DatosClima; avisos: string[] } {
   const p = j?.properties?.parameter;
   if (!p?.ALLSKY_SFC_SW_DWN) throw new Error('El JSON no tiene el formato horario de NASA POWER (properties.parameter).');
@@ -190,10 +207,23 @@ export function leerNASAJson(j: any): { clima: DatosClima; avisos: string[] } {
   const col = (k: string) => (p[k] ? claves.map((c) => Number(p[k][c])) : null);
   const [lon, lat, elev] = j.geometry?.coordinates ?? [NaN, NaN, 0];
   const anio = claves[0]?.slice(0, 4);
+  const h = j.header ?? {};
+  // Referencia horaria declarada: UTC (pedida) o LST (hora solar estándar ≈ round(lon/15))
+  const lst = String(h.time_standard ?? 'UTC').toUpperCase() === 'LST';
+  const fuentes: string[] = Array.isArray(h.sources) ? h.sources.map(String) : [];
+  const mensajes: string[] = Array.isArray(j.messages) ? j.messages.map(String) : [];
+  const preliminar = fuentes.some((f) => FUENTES_PRELIMINARES.test(f)) || mensajes.some((m) => FUENTES_PRELIMINARES.test(m));
   const r = construirClima(
     { ghi: col('ALLSKY_SFC_SW_DWN')!, dni: col('ALLSKY_SFC_SW_DNI'), dhi: col('ALLSKY_SFC_SW_DIFF'), tamb: col('T2M')!, viento: col('WS10M') ?? col('WS2M')! },
-    { fuente: 'nasa-power', descripcion: `NASA POWER horario, año ${anio}`, latitud: lat, longitud: lon, altitud: Number(elev) || 0, desfaseSolarHoras: 0.5 },
+    {
+      fuente: 'nasa-power', descripcion: `NASA POWER horario, año ${anio}`, latitud: lat, longitud: lon, altitud: Number(elev) || 0, desfaseSolarHoras: 0.5,
+      husoOrigen: lst ? Math.round(Number(lon) / 15) : 0,
+      valorRelleno: Number.isFinite(Number(h.fill_value)) ? Number(h.fill_value) : -999,
+      preliminar, fuentesDatos: fuentes, mensajes,
+    },
   );
+  if (lst) r.avisos.push(`NASA entregó los datos en hora solar estándar (LST, UTC${Math.round(Number(lon) / 15)}); se convirtieron a la hora local.`);
+  r.avisos.push(...mensajes.map((m) => `NASA POWER: ${m}`));
   r.clima.anioDatos = Number(anio);
   return r;
 }

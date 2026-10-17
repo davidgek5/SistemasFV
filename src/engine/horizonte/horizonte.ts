@@ -11,6 +11,8 @@
  * Convención de azimut: PVsyst (0 = S, +90 = O, −90 = E), igual que el perfil de PVGIS.
  */
 
+import { posicionSolar, type ParametrosSitio } from '../solar/spa';
+
 const RAD = Math.PI / 180;
 
 export interface PuntoHorizonte {
@@ -94,4 +96,53 @@ export function factorDifusaHorizonte(perfil: PerfilHorizonte, inclinacion: numb
     }
   }
   return total > 0 ? visible / total : 1;
+}
+
+// ───────────────────────── Trayectorias solares ─────────────────────────
+
+
+export interface PuntoTrayectoria {
+  azimut: number; // PVsyst (0 = S)
+  elevacion: number;
+  horaLocal: number; // horas decimales
+}
+
+/**
+ * Trayectoria del sol en un día (cada `pasoMin` minutos, solo con el sol sobre el horizonte).
+ * Se devuelve en tramos: un tramo nuevo empieza cuando el azimut salta de +180 a −180 (paso por el norte).
+ */
+export function trayectoriaSolar(anio: number, mes: number, dia: number, sitio: ParametrosSitio, husoHorario: number, pasoMin = 10): PuntoTrayectoria[][] {
+  const tramos: PuntoTrayectoria[][] = [];
+  let actual: PuntoTrayectoria[] = [];
+  const inicio = Date.UTC(anio, mes - 1, dia) / 1000 - husoHorario * 3600;
+  for (let m = 0; m <= 24 * 60; m += pasoMin) {
+    const p = posicionSolar(inicio + m * 60, sitio);
+    if (p.elevacion <= 0) {
+      if (actual.length) tramos.push(actual);
+      actual = [];
+      continue;
+    }
+    const previo = actual[actual.length - 1];
+    if (previo && Math.abs(p.azimutPVsyst - previo.azimut) > 180) {
+      tramos.push(actual);
+      actual = [];
+    }
+    actual.push({ azimut: p.azimutPVsyst, elevacion: p.elevacion, horaLocal: m / 60 });
+  }
+  if (actual.length) tramos.push(actual);
+  return tramos;
+}
+
+/** Solsticios y equinoccios de referencia. */
+export const DIAS_REFERENCIA = [
+  { nombre: '21 de junio', mes: 6, dia: 21 },
+  { nombre: '20 de marzo / 23 de septiembre', mes: 3, dia: 20 },
+  { nombre: '21 de diciembre', mes: 12, dia: 21 },
+] as const;
+
+/** Horas del día (sobre el horizonte geométrico) en que el sol queda detrás del horizonte lejano. */
+export function horasBloqueadas(tramos: PuntoTrayectoria[][], perfil: PerfilHorizonte, pasoMin = 10): number {
+  let n = 0;
+  for (const t of tramos) for (const q of t) if (q.elevacion < alturaHorizonte(perfil, q.azimut)) n++;
+  return (n * pasoMin) / 60;
 }

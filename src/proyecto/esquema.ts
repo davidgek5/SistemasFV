@@ -9,7 +9,7 @@ import type {
 import type { PerfilHorizonte } from '@/engine/horizonte/horizonte';
 import type { CriteriosStrings } from '@/engine/dimensionamiento/strings';
 
-export const VERSION_ESQUEMA = 2;
+export const VERSION_ESQUEMA = 3;
 
 export type TipoSistema = 'on-grid' | 'off-grid' | 'hibrido';
 
@@ -26,10 +26,20 @@ export interface DatosSimulacion {
   modo: ModoDatosSimulacion;
   fuente: FuenteSerie;
   anio: number | null;
-  incertidumbreDato: number; // fracción, para P90 (0 = solo variabilidad interanual)
+  /** Incertidumbre relativa del dato satelital por fuente (se suma a la variabilidad interanual en el P90). */
+  incertidumbre: Record<FuenteSerie, number>;
 }
 
-export const DATOS_SIMULACION_POR_DEFECTO: DatosSimulacion = { modo: 'principal', fuente: 'nasa-power', anio: null, incertidumbreDato: 0 };
+export const INCERTIDUMBRE_POR_DEFECTO: Record<FuenteSerie, number> = { 'nasa-power': 0.05, 'pvgis-serie': 0.04 };
+
+export const DATOS_SIMULACION_POR_DEFECTO: DatosSimulacion = { modo: 'principal', fuente: 'nasa-power', anio: null, incertidumbre: { ...INCERTIDUMBRE_POR_DEFECTO } };
+
+/** Mes (0–11) o año completo (mes = null) excluido de los promedios y del análisis. */
+export interface Exclusion {
+  fuente: FuenteSerie;
+  anio: number;
+  mes: number | null;
+}
 
 export interface Proyecto {
   schemaVersion: number;
@@ -43,6 +53,7 @@ export interface Proyecto {
   clima: DatosClima | null;
   seriesAnuales: SerieAnual[];
   datosSimulacion: DatosSimulacion;
+  exclusiones: Exclusion[];
   horizonte: PerfilHorizonte;
   carga: DefinicionCarga;
   tipoSistema: TipoSistema;
@@ -87,8 +98,10 @@ export const proyectoZ = z.object({
   seriesAnuales: z.array(z.object({ fuente: z.enum(['nasa-power', 'pvgis-serie']), anio: z.number().int(), clima: climaZ })),
   datosSimulacion: z.object({
     modo: z.enum(['principal', 'anio', 'promedio', 'todos']), fuente: z.enum(['nasa-power', 'pvgis-serie']),
-    anio: z.number().int().nullable(), incertidumbreDato: num.min(0).max(0.5),
+    anio: z.number().int().nullable(),
+    incertidumbre: z.object({ 'nasa-power': num.min(0).max(0.5), 'pvgis-serie': num.min(0).max(0.5) }),
   }),
+  exclusiones: z.array(z.object({ fuente: z.enum(['nasa-power', 'pvgis-serie']), anio: z.number().int(), mes: z.number().int().min(0).max(11).nullable() })),
   horizonte: z.object({ origen: z.enum(['pvgis', 'usuario', 'ninguno']), puntos: z.array(z.object({ azimut: num, altura: num })) }),
   carga: cargaZ,
   tipoSistema: z.enum(['on-grid', 'off-grid', 'hibrido']),
@@ -117,7 +130,18 @@ export function migrar(datos: unknown): unknown {
   let r = { ...d };
   if (r.schemaVersion === 1) {
     // v2: series multianuales y elección de datos para simular
-    r = { ...r, schemaVersion: 2, seriesAnuales: [], datosSimulacion: { ...DATOS_SIMULACION_POR_DEFECTO } };
+    r = { ...r, schemaVersion: 2, seriesAnuales: [], datosSimulacion: { modo: 'principal', fuente: 'nasa-power', anio: null, incertidumbreDato: 0 } };
+  }
+  if (r.schemaVersion === 2) {
+    // v3: incertidumbre del dato por fuente (5 % NASA, 4 % PVGIS) y exclusiones de meses/años
+    const d = (r.datosSimulacion ?? {}) as Record<string, unknown>;
+    const previa = Number(d.incertidumbreDato ?? 0);
+    const { incertidumbreDato: _omitida, ...resto } = d;
+    void _omitida;
+    r = {
+      ...r, schemaVersion: 3, exclusiones: [],
+      datosSimulacion: { ...resto, incertidumbre: previa > 0 ? { 'nasa-power': previa, 'pvgis-serie': previa } : { ...INCERTIDUMBRE_POR_DEFECTO } },
+    };
   }
   return r;
 }

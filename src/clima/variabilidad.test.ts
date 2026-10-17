@@ -118,7 +118,9 @@ describe('esquema v2 y datos de simulación', () => {
     delete v1.seriesAnuales;
     delete v1.datosSimulacion;
     const m = migrar(v1) as Record<string, unknown>;
-    expect(m.schemaVersion).toBe(2);
+    expect(m.schemaVersion).toBe(3);
+    expect((m.datosSimulacion as { incertidumbre: Record<string, number> }).incertidumbre).toEqual({ 'nasa-power': 0.05, 'pvgis-serie': 0.04 });
+    expect(m.exclusiones).toEqual([]);
     expect(m.seriesAnuales).toEqual([]);
     const p = validarProyecto(JSON.parse(JSON.stringify(v1)));
     expect(p.datosSimulacion.modo).toBe('principal');
@@ -128,7 +130,7 @@ describe('esquema v2 y datos de simulación', () => {
     p.clima = base;
     p.seriesAnuales = [anio(2021, 1), anio(2022, 0.9), anio(2023, 1.1)];
     expect(climaParaSimular(p).clima).toBe(base);
-    p.datosSimulacion = { modo: 'anio', fuente: 'nasa-power', anio: 2022, incertidumbreDato: 0 };
+    p.datosSimulacion = { modo: 'anio', fuente: 'nasa-power', anio: 2022, incertidumbre: { 'nasa-power': 0.05, 'pvgis-serie': 0.04 } };
     expect(climaParaSimular(p).clima.anioDatos).toBe(2022);
     p.datosSimulacion.modo = 'promedio';
     const prom = climaParaSimular(p).clima;

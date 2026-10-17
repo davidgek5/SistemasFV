@@ -118,13 +118,23 @@ export async function climatologiaNASA(lat: number, lon: number): Promise<Climat
   return { ghi: col('ALLSKY_SFC_SW_DWN'), dni: col('ALLSKY_SFC_SW_DNI'), dhi: col('ALLSKY_SFC_SW_DIFF'), t2m: col('T2M'), t2mMin: col('T2M_MIN'), t2mMax: col('T2M_MAX'), viento: col('WS10M') };
 }
 
-export async function horizontePVGIS(lat: number, lon: number): Promise<PuntoHorizonte[]> {
-  const { texto } = await obtenerJSON(`pvgis-horizonte:${r2(lat)}:${r2(lon)}`, [`/api/pvgis-horizonte?lat=${r2(lat)}&lon=${r2(lon)}`])
+/**
+ * Lee la respuesta de PVGIS printhorizon: outputs.horizon_profile = [{ A, H_hor }], con
+ * A = azimut (0 = sur, 90 = oeste, −90 = este; misma convención que PVsyst) y H_hor = altura en grados.
+ * Se quita el punto duplicado de +180 (= −180).
+ */
+export function leerHorizontePVGIS(j: unknown): PuntoHorizonte[] {
+  const perfil = (j as { outputs?: { horizon_profile?: { A: number; H_hor: number }[] } })?.outputs?.horizon_profile;
+  if (!Array.isArray(perfil) || perfil.length < 4) throw new Error('Respuesta de horizonte de PVGIS no reconocida (falta outputs.horizon_profile).');
+  const pts = perfil.map((x) => ({ azimut: Number(x.A), altura: Number(x.H_hor) })).filter((x) => Number.isFinite(x.azimut) && Number.isFinite(x.altura) && x.azimut < 180);
+  if (pts.length < 4) throw new Error('El perfil de horizonte de PVGIS no tiene datos válidos.');
+  return pts;
+}
+
+export async function horizontePVGIS(lat: number, lon: number, forzar = false): Promise<PuntoHorizonte[]> {
+  const { texto } = await obtenerJSON(`pvgis-horizonte:${r2(lat)}:${r2(lon)}`, [`/api/pvgis-horizonte?lat=${r2(lat)}&lon=${r2(lon)}`], forzar)
     .catch((e) => { throw new Error(`PVGIS: ${e.message}`); });
-  const perfil = JSON.parse(texto)?.outputs?.horizon_profile;
-  if (!Array.isArray(perfil)) throw new Error('Respuesta de horizonte de PVGIS no reconocida.');
-  // PVGIS: A = azimut (0 = sur, 90 = oeste), H_hor = altura del horizonte
-  return perfil.map((x: { A: number; H_hor: number }) => ({ azimut: Number(x.A), altura: Number(x.H_hor) })).filter((x) => x.azimut < 180);
+  return leerHorizontePVGIS(JSON.parse(texto));
 }
 
 /** Datos de ejemplo sintéticos (sin internet). */

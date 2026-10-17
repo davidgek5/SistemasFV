@@ -44,7 +44,7 @@ export default function PaginaResultados() {
       {error && <div className="mb-3"><Aviso tipo="error">{error}</Aviso></div>}
       {desactualizado && <div className="mb-3"><Aviso tipo="aviso">Cambiaste el proyecto después de esta simulación. Pulsa «Volver a simular».</Aviso></div>}
       {p.clima?.fuente === 'sintetico' && p.datosSimulacion.modo === 'principal' && <div className="mb-3"><Aviso tipo="aviso">Resultados con clima SINTÉTICO de prueba: no usar para diseño.</Aviso></div>}
-      {r && anuales && anuales.length > 0 && <AnioAAnio anuales={anuales} tipo={r.tipo} incertidumbre={p.datosSimulacion.incertidumbreDato} fuente={NOMBRE_FUENTE[p.datosSimulacion.fuente]} />}
+      {r && anuales && anuales.length > 0 && <AnioAAnio anuales={anuales} tipo={r.tipo} incertidumbre={p.datosSimulacion.incertidumbre[p.datosSimulacion.fuente]} fuente={NOMBRE_FUENTE[p.datosSimulacion.fuente]} />}
       {r && anuales && anuales.length > 0 && <h2 className="mb-3 mt-6 text-lg font-semibold">Detalle del año promedio</h2>}
       {r && <Contenido r={r} />}
     </>

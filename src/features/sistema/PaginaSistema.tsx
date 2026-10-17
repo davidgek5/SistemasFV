@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { Titulo } from '@/components/Layout';
 import { Aviso, Boton, CampoNumero, Indicador, Insignia, Interruptor, Rejilla, Segmentado, Selector, Tabla, Tarjeta } from '@/components/ui';
 import { useProyecto } from '@/proyecto/store';
-import { cargaDelProyecto, climaParaSimular, fuentesDisponibles, NOMBRE_FUENTE, puedeSimular, seriesDeFuente } from '@/proyecto/entrada';
+import { cargaDelProyecto, climaParaSimular, fuentesDisponibles, mesesExcluidos, NOMBRE_FUENTE, puedeSimular, seriesDeFuente } from '@/proyecto/entrada';
 import { SelectorDatosSimulacion } from '@/components/SelectorDatosSimulacion';
 import { analizar } from '@/clima/variabilidad';
 import { NOMBRES_MES } from '@/engine/calendario';
@@ -46,14 +46,15 @@ export default function PaginaSistema() {
   const multianual = useMemo(() => {
     if (!fuenteSeries) return null;
     const series = seriesDeFuente(p, fuenteSeries);
-    const a = analizar(series);
+    if (!series.length) return null;
+    const a = analizar(series, 0, mesesExcluidos(p, fuenteSeries));
     const hspDe = (ghi: number[], dhi: number[]) => hspPlanoMensual(ghi, dhi, g.inclinacion, g.albedo[0]);
     let peorMes = { anio: 0, mes: 0, hsp: Infinity };
-    for (const y of a.anios) hspDe(y.ghiMensual, y.dhiMensual).forEach((h, m) => { if (h < peorMes.hsp) peorMes = { anio: y.anio, mes: m, hsp: h }; });
-    const hPeorAnio = hspDe(a.peorAnio.ghiMensual, a.peorAnio.dhiMensual);
+    for (const y of a.anios) hspDe(y.ghiMensual, y.dhiMensual).forEach((h, m) => { if (!y.mesesExcluidos.includes(m) && h < peorMes.hsp) peorMes = { anio: y.anio, mes: m, hsp: h }; });
+    const hPeorAnio = hspDe(a.peorAnio.ghiMensual, a.peorAnio.dhiMensual).map((h, m) => (a.peorAnio.mesesExcluidos.includes(m) ? Infinity : h));
     const mPeorAnio = hPeorAnio.indexOf(Math.min(...hPeorAnio));
     return { fuente: fuenteSeries, peorMes, peorAnio: { anio: a.peorAnio.anio, mes: mPeorAnio, hsp: hPeorAnio[mPeorAnio] } };
-  }, [fuenteSeries, p.seriesAnuales, g.inclinacion, g.albedo]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fuenteSeries, p.seriesAnuales, p.exclusiones, g.inclinacion, g.albedo]); // eslint-disable-line react-hooks/exhaustive-deps
   const tMinSitio = clima ? Math.floor(clima.anual.tmin) - 2 : null;
 
   const verificaciones = useMemo(

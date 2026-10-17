@@ -9,7 +9,7 @@ import { resumenMensual } from '@/clima/resumen';
 import { climaEjemplo, descargarNASA, descargarPVGIS, horizontePVGIS, leerHorizonteTexto } from '@/clima/servicio';
 import { NOMBRES_MES } from '@/engine/calendario';
 import { descargarArchivo, fmt, nombreArchivo } from '@/lib/formato';
-import { alturaHorizonte, prepararPerfil } from '@/engine/horizonte/horizonte';
+import { alturaHorizonte, DIAS_REFERENCIA, horasBloqueadas, prepararPerfil, trayectoriaSolar } from '@/engine/horizonte/horizonte';
 
 import { DatosMultianuales } from './DatosMultianuales';
 
@@ -89,19 +89,54 @@ export default function PaginaUbicacion() {
   }, [resumen]);
 
   const perfilH = useMemo(() => prepararPerfil(p.horizonte), [p.horizonte]);
+  const [mensajesH, setMensajesH] = useState<{ tipo: 'ok' | 'error'; texto: string }[]>([]);
+  const [cargandoH, setCargandoH] = useState(false);
+  const trayectorias = useMemo(() => {
+    const sitio = { latitud: u.latitud, longitud: u.longitud, altitud: u.altitud };
+    return DIAS_REFERENCIA.map((d, i) => ({ ...d, color: [COLORES.solar, COLORES.verde, COLORES.azul][i], tramos: trayectoriaSolar(2025, d.mes, d.dia, sitio, u.husoHorario) }));
+  }, [u.latitud, u.longitud, u.altitud, u.husoHorario]);
   const opcionHorizonte = useMemo(() => {
-    if (perfilH.puntos.length === 0) return null;
     const az = Array.from({ length: 361 }, (_, i) => i - 180);
+    const hayPerfil = perfilH.puntos.length > 0;
+    const maxSol = Math.max(...trayectorias.flatMap((t) => t.tramos.flat().map((q) => q.elevacion)), 30);
     return {
-      legend: false,
-      tooltip: { trigger: 'axis', valueFormatter: (v: number) => `${fmt(v, 1)}°` },
-      grid: { left: 40, right: 12, top: 16 },
-      xAxis: { type: 'value', min: -180, max: 180, interval: 45, name: 'Azimut (0 = S, −90 = E, +90 = O)', nameLocation: 'middle', nameGap: 24,
+      legend: { data: [...(hayPerfil ? ['Horizonte'] : []), ...trayectorias.map((t) => t.nombre)] },
+      tooltip: {
+        trigger: 'item',
+        formatter: (q: { seriesName: string; value: number[]; data?: { hora?: number } }) => {
+          const hora = (q.data as { hora?: number } | undefined)?.hora;
+          return `${q.seriesName}<br/>Azimut ${fmt(q.value[0], 0)}° · altura ${fmt(q.value[1], 1)}°${hora !== undefined ? `<br/>${String(Math.floor(hora)).padStart(2, '0')}:${String(Math.round((hora % 1) * 60)).padStart(2, '0')} h` : ''}`;
+        },
+      },
+      grid: { left: 40, right: 12, bottom: 44 },
+      xAxis: { type: 'value', min: -180, max: 180, interval: 45, name: 'Azimut (0 = S, −90 = E, +90 = O)', nameLocation: 'middle', nameGap: 26,
         axisLabel: { formatter: (v: number) => ({ '-180': 'N', '-90': 'E', '0': 'S', '90': 'O', '180': 'N' } as Record<string, string>)[String(v)] ?? `${v}°` } },
-      yAxis: { type: 'value', min: 0, name: 'Altura °' },
-      series: [{ type: 'line', showSymbol: false, areaStyle: { color: 'rgba(100,116,139,0.35)' }, lineStyle: { color: '#64748b' }, data: az.map((a) => [a, +alturaHorizonte(perfilH, a).toFixed(2)]) }],
+      yAxis: { type: 'value', min: 0, max: Math.ceil(maxSol / 10) * 10, name: 'Altura °' },
+      series: [
+        ...(hayPerfil ? [{ name: 'Horizonte', type: 'line', showSymbol: false, z: 1, areaStyle: { color: 'rgba(100,116,139,0.45)' }, lineStyle: { color: '#475569' }, itemStyle: { color: '#475569' },
+          data: az.map((a) => [a, +alturaHorizonte(perfilH, a).toFixed(2)]) }] : []),
+        ...trayectorias.flatMap((t) => t.tramos.map((tramo) => ({
+          name: t.nombre, type: 'line', showSymbol: true, symbolSize: 3, z: 3, lineStyle: { color: t.color, width: 2 }, itemStyle: { color: t.color },
+          data: tramo.map((q) => ({ value: [+q.azimut.toFixed(2), +q.elevacion.toFixed(2)], hora: q.horaLocal })),
+        }))),
+      ],
     };
-  }, [perfilH]);
+  }, [perfilH, trayectorias]);
+
+  const descargarHorizonte = async (forzar = false) => {
+    setCargandoH(true);
+    setMensajesH([]);
+    try {
+      const puntos = await horizontePVGIS(u.latitud, u.longitud, forzar);
+      actualizar((x) => ({ ...x, horizonte: { origen: 'pvgis', puntos } }));
+      const maxH = Math.max(...puntos.map((q) => q.altura));
+      setMensajesH([{ tipo: 'ok', texto: `Horizonte de PVGIS cargado: ${puntos.length} puntos, altura máxima ${fmt(maxH, 1)}°.` }]);
+    } catch (e) {
+      setMensajesH([{ tipo: 'error', texto: e instanceof Error ? e.message : String(e) }]);
+    } finally {
+      setCargandoH(false);
+    }
+  };
 
   return (
     <>
@@ -182,13 +217,9 @@ export default function PaginaUbicacion() {
       <Tarjeta className="mt-4" titulo="Horizonte lejano" subtitulo="Montañas que tapan el sol al amanecer o al atardecer. Importante en la Sierra."
         acciones={
           <>
-            <Boton disabled={cargando} onClick={() => ejecutar(async () => {
-              const puntos = await horizontePVGIS(u.latitud, u.longitud);
-              actualizar((x) => ({ ...x, horizonte: { origen: 'pvgis', puntos } }));
-              setMensajes([{ tipo: 'ok', texto: `Horizonte de PVGIS cargado (${puntos.length} puntos).` }]);
-            })}>Descargar de PVGIS</Boton>
+            <Boton disabled={cargandoH} onClick={() => descargarHorizonte()}>{cargandoH ? 'Descargando…' : 'Descargar de PVGIS'}</Boton>
             <Boton onClick={() => archivoHorizonte.current?.click()}>Cargar archivo</Boton>
-            {p.horizonte.puntos.length > 0 && <Boton variante="fantasma" onClick={() => actualizar((x) => ({ ...x, horizonte: { origen: 'ninguno', puntos: [] } }))}>Quitar</Boton>}
+            {p.horizonte.puntos.length > 0 && <Boton variante="fantasma" onClick={() => { actualizar((x) => ({ ...x, horizonte: { origen: 'ninguno', puntos: [] } })); setMensajesH([]); }}>Quitar</Boton>}
           </>
         }>
         <input ref={archivoHorizonte} type="file" accept=".csv,.txt,.hor" className="hidden" onChange={async (e) => {
@@ -198,19 +229,23 @@ export default function PaginaUbicacion() {
           try {
             const puntos = leerHorizonteTexto(await f.text());
             actualizar((x) => ({ ...x, horizonte: { origen: 'usuario', puntos } }));
-            setMensajes([{ tipo: 'ok', texto: `Horizonte propio cargado (${puntos.length} puntos).` }]);
+            setMensajesH([{ tipo: 'ok', texto: `Horizonte propio cargado (${puntos.length} puntos).` }]);
           } catch (err) {
-            setMensajes([{ tipo: 'error', texto: err instanceof Error ? err.message : String(err) }]);
+            setMensajesH([{ tipo: 'error', texto: err instanceof Error ? err.message : String(err) }]);
           }
         }} />
-        {opcionHorizonte ? (
-          <>
-            <Insignia tono="azul">{p.horizonte.origen === 'pvgis' ? 'Perfil de PVGIS' : 'Perfil propio'}</Insignia>
-            <Grafico opcion={opcionHorizonte} alto={220} />
-          </>
-        ) : (
-          <p className="text-sm text-slate-500">Sin horizonte (se supone despejado). El archivo propio debe tener filas «azimut, altura» en grados, con azimut 0 = sur, −90 = este, +90 = oeste (convención PVsyst).</p>
-        )}
+        {mensajesH.length > 0 && <div className="mb-3 space-y-2">{mensajesH.map((m, i) => <Aviso key={i} tipo={m.tipo}>{m.texto}</Aviso>)}</div>}
+        <div className="mb-2 flex flex-wrap gap-2">
+          <Insignia tono={perfilH.puntos.length ? 'azul' : 'gris'}>{p.horizonte.origen === 'pvgis' ? 'Perfil de PVGIS' : p.horizonte.origen === 'usuario' ? 'Perfil propio' : 'Sin horizonte (despejado)'}</Insignia>
+          {perfilH.puntos.length > 0 && trayectorias.map((t) => (
+            <Insignia key={t.nombre}>{t.nombre}: {fmt(horasBloqueadas(t.tramos, perfilH), 1)} h tapado</Insignia>
+          ))}
+        </div>
+        <Grafico opcion={opcionHorizonte} alto={300} />
+        <p className="mt-2 text-xs text-slate-500">
+          Trayectorias del sol en los solsticios y el equinoccio para este sitio (SPA, hora local; toca un punto para ver la hora). Donde la trayectoria queda dentro del área gris, el sol está detrás de la montaña y se pierde la directa.
+          El archivo propio debe tener filas «azimut, altura» en grados, con azimut 0 = sur, −90 = este, +90 = oeste (convención PVsyst y PVGIS).
+        </p>
       </Tarjeta>
     </>
   );

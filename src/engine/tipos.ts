@@ -39,6 +39,16 @@ export interface DatosClima {
   origenMeses?: { mes: number; anio: number }[];
   /** Año real de los datos (series anuales de NASA POWER o PVGIS). */
   anioDatos?: number;
+  /** Información de calidad del archivo de origen (valores faltantes, datos preliminares). */
+  calidad?: CalidadOrigen;
+}
+
+export interface CalidadOrigen {
+  horas: number; // horas del archivo original (8760 u 8784)
+  faltantes: { ghi: number; dni: number; dhi: number; tamb: number; viento: number };
+  preliminar: boolean; // la fuente declara datos casi en tiempo real / provisionales
+  fuentesDatos?: string[]; // p. ej. ["syn1deg", "flashflux", "merra2"] (NASA POWER)
+  mensajes?: string[];
 }
 
 /** Serie meteorológica de un año real (NASA POWER o PVGIS seriescalc). */

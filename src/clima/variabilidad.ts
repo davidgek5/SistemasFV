@@ -3,7 +3,7 @@
  * P50/P90 de irradiación, peor mes / peor año, promedio multianual y comparación de fuentes.
  * Método documentado en MODELOS.md §18.
  */
-import { DIAS_MES } from '@/engine/calendario';
+import { DIAS_MES, MES_DE_HORA } from '@/engine/calendario';
 import { HORAS_ANIO, type DatosClima } from '@/engine/tipos';
 import { resumenMensual } from './resumen';
 
@@ -62,6 +62,8 @@ export function excedencia(valores: number[], incertidumbreDato = 0): Estadistic
 
 export interface ResumenAnio {
   anio: number;
+  /** Meses (0–11) excluidos por el usuario; en ghiAnual se reemplazan por la media de los otros años. */
+  mesesExcluidos: number[];
   ghiMensual: number[]; // kWh/m²·mes
   dhiMensual: number[];
   hspMensual: number[]; // kWh/m²·día
@@ -77,6 +79,7 @@ export function resumirAnio(c: DatosClima, anio: number): ResumenAnio {
   const r = resumenMensual(c);
   return {
     anio,
+    mesesExcluidos: [],
     ghiMensual: r.meses.map((m) => m.ghi),
     dhiMensual: r.meses.map((m) => m.dhi),
     hspMensual: r.meses.map((m) => m.hsp),
@@ -103,16 +106,38 @@ export interface AnalisisMultianual {
   peorMesPromedio: { mes: number; hsp: number };
 }
 
-export function analizar(series: { anio: number; clima: DatosClima }[], incertidumbreDato = 0): AnalisisMultianual {
+export interface MesExcluido {
+  anio: number;
+  mes: number;
+}
+
+/**
+ * Análisis multianual. Los años excluidos deben quitarse antes de llamar.
+ * Meses excluidos: no cuentan en los promedios mensuales ni en el peor mes; en la GHI anual de su
+ * año se reemplazan por la media de ese mes en los demás años (imputación), para no sesgar P50/P90.
+ */
+export function analizar(series: { anio: number; clima: DatosClima }[], incertidumbreDato = 0, mesesExcluidos: MesExcluido[] = []): AnalisisMultianual {
   if (series.length === 0) throw new Error('No hay años para analizar.');
+  const excl = (anio: number, mes: number) => mesesExcluidos.some((e) => e.anio === anio && e.mes === mes);
   const anios = series.map((s) => resumirAnio(s.clima, s.anio)).sort((a, b) => a.anio - b.anio);
-  const promedioMensual = Array.from({ length: 12 }, (_, m) => media(anios.map((a) => a.ghiMensual[m])));
-  const desviacionMensual = Array.from({ length: 12 }, (_, m) => desviacion(anios.map((a) => a.ghiMensual[m])));
+  const validos = (m: number) => anios.filter((a) => !excl(a.anio, m)).map((a) => a.ghiMensual[m]);
+  const promedioMensual = Array.from({ length: 12 }, (_, m) => {
+    const v = validos(m);
+    return v.length ? media(v) : media(anios.map((a) => a.ghiMensual[m]));
+  });
+  const desviacionMensual = Array.from({ length: 12 }, (_, m) => desviacion(validos(m)));
+  for (const a of anios) {
+    a.mesesExcluidos = Array.from({ length: 12 }, (_, m) => m).filter((m) => excl(a.anio, m));
+    if (a.mesesExcluidos.length) {
+      a.ghiAnual = a.ghiMensual.reduce((s, g, m) => s + (a.mesesExcluidos.includes(m) ? promedioMensual[m] : g), 0);
+      a.hsp = a.ghiAnual / 365;
+    }
+  }
   const hspPromedioMensual = promedioMensual.map((g, m) => g / DIAS_MES[m]);
   const ghi = excedencia(anios.map((a) => a.ghiAnual), incertidumbreDato);
   const porGhi = [...anios].sort((a, b) => a.ghiAnual - b.ghiAnual);
   let peorMes = { anio: anios[0].anio, mes: 0, hsp: Infinity, ghi: 0 };
-  for (const a of anios) a.hspMensual.forEach((h, m) => { if (h < peorMes.hsp) peorMes = { anio: a.anio, mes: m, hsp: h, ghi: a.ghiMensual[m] }; });
+  for (const a of anios) a.hspMensual.forEach((h, m) => { if (!excl(a.anio, m) && h < peorMes.hsp) peorMes = { anio: a.anio, mes: m, hsp: h, ghi: a.ghiMensual[m] }; });
   const iMin = hspPromedioMensual.indexOf(Math.min(...hspPromedioMensual));
   return {
     anios, promedioMensual, desviacionMensual, hspPromedioMensual, ghi,
@@ -127,24 +152,34 @@ export function analizar(series: { anio: number; clima: DatosClima }[], incertid
  * la energía anual es muy cercana a la media de las simulaciones por año, pero los
  * indicadores de off-grid (déficit) se subestiman. Ver MODELOS.md §18.
  */
-export function promedioHorario(series: DatosClima[]): DatosClima {
+export function promedioHorario(series: DatosClima[], mesesExcluidos: MesExcluido[] = []): DatosClima {
   if (series.length === 0) throw new Error('No hay años para promediar.');
   const n = series.length;
+  // Para cada mes, qué años cuentan (si un mes quedó excluido en todos, se usan todos)
+  const usa = Array.from({ length: 12 }, (_, m) => {
+    const u = series.map((s) => !mesesExcluidos.some((e) => e.anio === s.anioDatos && e.mes === m));
+    return u.some(Boolean) ? u : u.map(() => true);
+  });
+  const cuenta = usa.map((u) => u.filter(Boolean).length);
   const prom = (k: 'ghi' | 'dni' | 'dhi' | 'tamb' | 'viento') => {
     const out = new Array<number>(HORAS_ANIO).fill(0);
-    for (const s of series) for (let i = 0; i < HORAS_ANIO; i++) out[i] += s[k][i];
-    return out.map((x) => Math.round((x / n) * 10) / 10);
+    series.forEach((s, j) => {
+      for (let i = 0; i < HORAS_ANIO; i++) if (usa[MES_DE_HORA[i]][j]) out[i] += s[k][i];
+    });
+    return out.map((x, i) => Math.round((x / cuenta[MES_DE_HORA[i]]) * 10) / 10);
   };
   const b = series[0];
   const anios = series.map((s) => s.anioDatos).filter((x): x is number => x !== undefined);
+  const nExcl = mesesExcluidos.filter((e) => anios.includes(e.anio)).length;
   return {
     ...b,
     fuente: 'promedio',
-    descripcion: `Promedio horario ${anios.length ? `${Math.min(...anios)}–${Math.max(...anios)}` : ''} (${n} años, ${b.fuente === 'nasa-power' ? 'NASA POWER' : 'PVGIS'})`,
+    descripcion: `Promedio horario ${anios.length ? `${Math.min(...anios)}–${Math.max(...anios)}` : ''} (${n} años, ${b.fuente === 'nasa-power' ? 'NASA POWER' : 'PVGIS'}${nExcl ? `, ${nExcl} mes(es) excluido(s)` : ''})`,
     desfaseSolarHoras: media(series.map((s) => s.desfaseSolarHoras)),
     ghi: prom('ghi'), dni: prom('dni'), dhi: prom('dhi'), tamb: prom('tamb'), viento: prom('viento'),
     anioDatos: undefined,
     origenMeses: undefined,
+    calidad: undefined,
   };
 }
 
